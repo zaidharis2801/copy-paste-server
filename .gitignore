@@ -1,0 +1,21 @@
+# Environment — contains passwords and secrets
+.env
+
+# Runtime data
+uploads/
+clipboard.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Editor
+.vscode/
+.idea/
+*.swp

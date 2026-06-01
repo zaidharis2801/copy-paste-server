@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClipSync</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Thin custom scrollbar */
+    ::-webkit-scrollbar          { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track    { background: #1e293b; }
+    ::-webkit-scrollbar-thumb    { background: #475569; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+    /* New-item slide-in */
+    .slide-in {
+      animation: slideIn 0.22s ease-out both;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(-6px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    /* Tab pane visibility */
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* Toast enter */
+    .toast { transition: transform 0.3s ease, opacity 0.3s ease; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       AUTH WALL
+  ════════════════════════════════════════════════════════════════ -->
+  <div id="auth-wall"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 px-4">
+    <div class="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-800 p-8 shadow-2xl">
+
+      <div class="mb-7 text-center">
+        <div class="mb-3 text-5xl select-none">📋</div>
+        <h1 class="text-2xl font-bold tracking-tight text-white">ClipSync</h1>
+        <p class="mt-1 text-sm text-slate-400">Clipboard &amp; file transfer</p>
+      </div>
+
+      <div class="space-y-3">
+        <input
+          id="password-input"
+          type="password"
+          placeholder="Password"
+          autocomplete="current-password"
+          class="w-full rounded-xl border border-slate-600 bg-slate-700 px-4 py-3
+                 text-white placeholder-slate-500 transition
+                 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        />
+        <p id="auth-error"
+           class="hidden text-center text-sm font-medium text-red-400">
+          Incorrect password — try again
+        </p>
+        <button
+          id="login-btn"
+          class="w-full rounded-xl bg-indigo-600 py-3 font-semibold text-white
+                 transition hover:bg-indigo-500 active:scale-[0.98]
+                 disabled:cursor-not-allowed disabled:opacity-50"
+        >Enter</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MAIN APP  (hidden until authenticated)
+  ════════════════════════════════════════════════════════════════ -->
+  <div id="main-app" class="hidden flex-col" style="min-height:100vh">
+
+    <!-- ── Header ──────────────────────────────────────────────── -->
+    <header class="sticky top-0 z-30 border-b border-slate-800 bg-slate-900/90 backdrop-blur-sm">
+      <div class="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
+
+        <div class="flex items-center gap-2 select-none">
+          <span class="text-xl">📋</span>
+          <span class="font-bold tracking-tight text-white">ClipSync</span>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <!-- SSE live indicator -->
+          <div class="flex items-center gap-1.5" title="Connection status">
+            <span id="sse-dot"
+                  class="h-2 w-2 rounded-full bg-slate-600 transition-colors duration-500"></span>
+            <span id="sse-label"
+                  class="hidden text-xs text-slate-500 sm:inline">Connecting…</span>
+          </div>
+          <button id="logout-btn"
+                  class="rounded-lg px-3 py-1.5 text-sm text-slate-400
+                         transition hover:bg-slate-800 hover:text-white">
+            Logout
+          </button>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- ── Tab Bar ─────────────────────────────────────────────── -->
+    <div class="mx-auto w-full max-w-2xl px-4 pt-4">
+      <div class="flex gap-1 rounded-xl bg-slate-800 p-1">
+        <button id="tab-btn-clipboard"
+                class="tab-btn flex-1 rounded-lg py-2 text-sm font-medium
+                       transition select-none">
+          📋 Clipboard
+        </button>
+        <button id="tab-btn-files"
+                class="tab-btn flex-1 rounded-lg py-2 text-sm font-medium
+                       transition select-none">
+          📁 Files
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Tab Contents ────────────────────────────────────────── -->
+    <main class="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-4">
+
+      <!-- ── Clipboard Tab ──────────────────────────────────── -->
+      <div id="tab-clipboard" class="tab-pane space-y-4">
+
+        <!-- Compose card -->
+        <div class="overflow-hidden rounded-2xl border border-slate-700 bg-slate-800">
+          <textarea
+            id="text-input"
+            rows="5"
+            placeholder="Paste or type something… (Ctrl+Enter to submit)"
+            class="w-full resize-none bg-transparent px-4 py-4 text-sm
+                   leading-relaxed text-white placeholder-slate-500
+                   focus:outline-none"
+          ></textarea>
+          <div class="flex items-center justify-between
+                      border-t border-slate-700 px-4 py-2.5">
+            <span id="char-count" class="text-xs text-slate-500">0 chars</span>
+            <button id="submit-text-btn"
+                    class="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold
+                           text-white transition hover:bg-indigo-500 active:scale-95
+                           disabled:cursor-not-allowed disabled:opacity-50">
+              Submit
+            </button>
+          </div>
+        </div>
+
+        <!-- List header -->
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Recent Entries
+          </h2>
+          <span id="text-count" class="text-xs text-slate-600"></span>
+        </div>
+
+        <div id="text-loading"
+             class="py-8 text-center text-sm text-slate-600">Loading…</div>
+        <div id="text-empty" class="hidden py-12 text-center">
+          <div class="mb-2 text-4xl">📭</div>
+          <p class="text-sm text-slate-600">Nothing yet — paste something above!</p>
+        </div>
+        <div id="text-list" class="space-y-2"></div>
+
+      </div><!-- /clipboard tab -->
+
+      <!-- ── Files Tab ──────────────────────────────────────── -->
+      <div id="tab-files" class="tab-pane space-y-4">
+
+        <!-- Drop zone -->
+        <div id="drop-zone"
+             class="cursor-pointer rounded-2xl border-2 border-dashed border-slate-700
+                    p-8 text-center transition-all
+                    hover:border-indigo-500 hover:bg-slate-800/40">
+          <input id="file-input" type="file" multiple class="hidden" />
+          <div class="mb-3 text-4xl transition-transform duration-200 select-none"
+               id="drop-icon">📂</div>
+          <p class="font-medium text-white">Drop files here</p>
+          <p class="mt-1 text-sm text-slate-500">or tap to browse</p>
+          <p class="mt-2 text-xs text-slate-600">
+            Max <span id="max-mb-label">50</span> MB per file
+          </p>
+        </div>
+
+        <!-- Upload progress -->
+        <div id="upload-progress"
+             class="hidden rounded-xl border border-slate-700 bg-slate-800 p-4">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <span id="progress-name"
+                  class="min-w-0 flex-1 truncate text-sm text-white"></span>
+            <span id="progress-pct"
+                  class="shrink-0 text-sm font-semibold text-indigo-400">0%</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-slate-700">
+            <div id="progress-bar"
+                 class="h-full rounded-full bg-indigo-500 transition-all duration-150"
+                 style="width:0%"></div>
+          </div>
+        </div>
+
+        <!-- List header -->
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Uploaded Files
+          </h2>
+          <span id="file-count" class="text-xs text-slate-600"></span>
+        </div>
+
+        <div id="file-loading"
+             class="py-8 text-center text-sm text-slate-600">Loading…</div>
+        <div id="file-empty" class="hidden py-12 text-center">
+          <div class="mb-2 text-4xl">📭</div>
+          <p class="text-sm text-slate-600">No files uploaded yet</p>
+        </div>
+        <div id="file-list" class="space-y-2"></div>
+
+      </div><!-- /files tab -->
+
+    </main>
+  </div><!-- /main-app -->
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       TOAST CONTAINER
+  ════════════════════════════════════════════════════════════════ -->
+  <div id="toasts"
+       class="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none">
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       JAVASCRIPT
+  ════════════════════════════════════════════════════════════════ -->
+  <script>
+  (() => {
+    'use strict';
+
+    /* ── State ────────────────────────────────────────────────────── */
+    const API  = '';
+    let token  = localStorage.getItem('clipsync_token') || '';
+    let sse    = null;
+    let curTab = 'clipboard';
+    const maxFileMB = 50;  // mirrored from server default; UI hint only
+
+    /* ── DOM shortcuts ────────────────────────────────────────────── */
+    const $  = id => document.getElementById(id);
+    const show = id => $(id).classList.remove('hidden');
+    const hide = id => $(id).classList.add('hidden');
+
+    /* ════════════════════════════════════════════════════════════════
+       AUTH
+    ════════════════════════════════════════════════════════════════ */
+    async function checkAuth () {
+      if (!token) { return showWall(); }
+      try {
+        const r = await apiFetch('/api/text?limit=1');
+        if (r.status === 401) {
+          token = '';
+          localStorage.removeItem('clipsync_token');
+          showWall();
+        } else {
+          showApp();
+        }
+      } catch {
+        showWall();
+      }
+    }
+
+    async function login () {
+      const pwd = $('password-input').value;
+      if (!pwd) return;
+
+      const btn = $('login-btn');
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      hide('auth-error');
+
+      try {
+        const r = await fetch(`${API}/api/auth/login`, {
+          method : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body   : JSON.stringify({ password: pwd }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          token   = d.token;
+          localStorage.setItem('clipsync_token', token);
+          showApp();
+        } else {
+          show('auth-error');
+          $('password-input').value = '';
+          $('password-input').focus();
+        }
+      } catch {
+        toast('Cannot reach server', 'error');
+      } finally {
+        btn.disabled    = false;
+        btn.textContent = 'Enter';
+      }
+    }
+
+    function logout () {
+      localStorage.removeItem('clipsync_token');
+      token = '';
+      if (sse) { sse.close(); sse = null; }
+      showWall();
+    }
+
+    function showWall () {
+      $('auth-wall').classList.remove('hidden');
+      $('main-app').classList.remove('flex');
+      $('main-app').classList.add('hidden');
+      setTimeout(() => $('password-input').focus(), 60);
+    }
+
+    function showApp () {
+      $('auth-wall').classList.add('hidden');
+      $('main-app').classList.remove('hidden');
+      $('main-app').classList.add('flex');
+      switchTab('clipboard');
+      connectSSE();
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       TABS
+    ════════════════════════════════════════════════════════════════ */
+    function switchTab (tab) {
+      curTab = tab;
+
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      $(`tab-${tab}`).classList.add('active');
+
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('bg-slate-700', 'text-white');
+        b.classList.add('text-slate-400');
+      });
+      const btn = $(`tab-btn-${tab}`);
+      btn.classList.add('bg-slate-700', 'text-white');
+      btn.classList.remove('text-slate-400');
+
+      if (tab === 'clipboard') loadTexts();
+      if (tab === 'files')     loadFiles();
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       TEXT — CLIPBOARD
+    ════════════════════════════════════════════════════════════════ */
+    async function loadTexts () {
+      show('text-loading');
+      hide('text-empty');
+      $('text-list').innerHTML = '';
+
+      try {
+        const r = await apiFetch('/api/text');
+        if (!r.ok) throw new Error('load failed');
+        const entries = await r.json();
+        hide('text-loading');
+        $('text-count').textContent = entries.length ? `${entries.length}` : '';
+        if (entries.length === 0) { show('text-empty'); return; }
+        entries.forEach(e => $('text-list').appendChild(textCard(e)));
+      } catch {
+        hide('text-loading');
+        toast('Failed to load entries', 'error');
+      }
+    }
+
+    async function submitText () {
+      const ta      = $('text-input');
+      const btn     = $('submit-text-btn');
+      const content = ta.value.trim();
+      if (!content) return;
+
+      btn.disabled    = true;
+      btn.textContent = 'Sending…';
+
+      try {
+        const r = await apiFetch('/api/text', {
+          method : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body   : JSON.stringify({ content }),
+        });
+        if (r.ok) {
+          ta.value = '';
+          $('char-count').textContent = '0 chars';
+          toast('Submitted!', 'success');
+          await loadTexts();
+        } else {
+          toast('Failed to submit', 'error');
+        }
+      } catch {
+        toast('Connection error', 'error');
+      } finally {
+        btn.disabled    = false;
+        btn.textContent = 'Submit';
+      }
+    }
+
+    function copyText (el, text) {
+      const finish = () => {
+        const orig = el.textContent;
+        el.textContent = 'Copied!';
+        el.classList.add('text-green-400', 'bg-green-900/30');
+        toast('Copied to clipboard!', 'success');
+        setTimeout(() => {
+          el.textContent = orig;
+          el.classList.remove('text-green-400', 'bg-green-900/30');
+        }, 2000);
+      };
+
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(finish).catch(() => {
+          fallbackCopy(text);
+          finish();
+        });
+      } else {
+        fallbackCopy(text);
+        finish();
+      }
+    }
+
+    function fallbackCopy (text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+
+    function textCard (entry) {
+      const div = document.createElement('div');
+      div.id    = `text-${entry.id}`;
+      div.className = 'slide-in flex gap-3 rounded-xl border border-slate-700 bg-slate-800 p-4';
+
+      const preview = entry.content.length > 400
+        ? entry.content.slice(0, 400) + '…'
+        : entry.content;
+
+      div.innerHTML = `
+        <div class="min-w-0 flex-1">
+          <pre class="whitespace-pre-wrap break-words font-sans text-sm
+                      leading-relaxed text-slate-200">${esc(preview)}</pre>
+          <p class="mt-1.5 text-xs text-slate-500">${timeAgo(entry.created_at)}</p>
+        </div>
+        <button
+          class="copy-btn h-fit shrink-0 rounded-lg bg-slate-700 px-3 py-1.5
+                 text-xs font-medium text-indigo-400 transition
+                 hover:bg-slate-600 hover:text-indigo-300 active:scale-95"
+        >Copy</button>
+      `;
+
+      div.querySelector('.copy-btn').addEventListener('click', function () {
+        copyText(this, entry.content);
+      });
+
+      return div;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       FILES
+    ════════════════════════════════════════════════════════════════ */
+    async function loadFiles () {
+      show('file-loading');
+      hide('file-empty');
+      $('file-list').innerHTML = '';
+
+      try {
+        const r = await apiFetch('/api/files');
+        if (!r.ok) throw new Error('load failed');
+        const files = await r.json();
+        hide('file-loading');
+        $('file-count').textContent = files.length ? `${files.length}` : '';
+        if (files.length === 0) { show('file-empty'); return; }
+        files.forEach(f => $('file-list').appendChild(fileCard(f)));
+      } catch {
+        hide('file-loading');
+        toast('Failed to load files', 'error');
+      }
+    }
+
+    function handleFiles (fileList) {
+      Array.from(fileList).forEach(uploadFile);
+      $('file-input').value = '';
+    }
+
+    function uploadFile (file) {
+      if (file.size > maxFileMB * 1024 * 1024) {
+        toast(`"${file.name}" exceeds ${maxFileMB} MB limit`, 'error');
+        return;
+      }
+
+      const prog    = $('upload-progress');
+      const nameEl  = $('progress-name');
+      const pctEl   = $('progress-pct');
+      const bar     = $('progress-bar');
+
+      nameEl.textContent = file.name;
+      pctEl.textContent  = '0%';
+      bar.style.width    = '0%';
+      prog.classList.remove('hidden');
+
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API}/api/files/upload`);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          const p = Math.round((e.loaded / e.total) * 100);
+          pctEl.textContent = `${p}%`;
+          bar.style.width   = `${p}%`;
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        prog.classList.add('hidden');
+        if (xhr.status === 200 || xhr.status === 201) {
+          toast(`"${file.name}" uploaded!`, 'success');
+          if (curTab === 'files') loadFiles();
+        } else if (xhr.status === 413) {
+          toast('File too large for server limit', 'error');
+        } else if (xhr.status === 401) {
+          toast('Session expired — please log in again', 'error');
+        } else {
+          toast(`Upload failed (${xhr.status})`, 'error');
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        prog.classList.add('hidden');
+        toast('Upload error — check connection', 'error');
+      });
+
+      xhr.send(fd);
+    }
+
+    function fileCard (f) {
+      const div = document.createElement('div');
+      div.id    = `file-${f.id}`;
+      div.className = 'slide-in flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800 p-4';
+
+      div.innerHTML = `
+        <span class="shrink-0 text-2xl select-none">${fileIcon(f.original_name)}</span>
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-sm font-medium text-white">${esc(f.original_name)}</p>
+          <p class="mt-0.5 text-xs text-slate-500">${fmtBytes(f.size_bytes)} · ${timeAgo(f.created_at)}</p>
+        </div>
+        <a
+          href="${API}/api/files/${f.id}/download?token=${encodeURIComponent(token)}"
+          download="${esc(f.original_name)}"
+          class="dl-link shrink-0 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium
+                 text-indigo-400 transition hover:bg-slate-600 hover:text-indigo-300 active:scale-95"
+        >Download</a>
+      `;
+
+      div.querySelector('.dl-link').addEventListener('click', () => {
+        toast('Download started', 'success');
+      });
+
+      return div;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       SERVER-SENT EVENTS
+    ════════════════════════════════════════════════════════════════ */
+    function connectSSE () {
+      if (sse) sse.close();
+      setSSEStatus('connecting');
+
+      sse = new EventSource(`${API}/api/events?token=${encodeURIComponent(token)}`);
+
+      sse.onopen = () => setSSEStatus('live');
+
+      sse.onerror = () => {
+        setSSEStatus('disconnected');
+        sse.close();
+        setTimeout(connectSSE, 5000);
+      };
+
+      sse.addEventListener('new_text', e => {
+        const entry = JSON.parse(e.data);
+        if (curTab !== 'clipboard') return;
+        hide('text-empty');
+        $('text-list').prepend(textCard(entry));
+        const n = $('text-list').children.length;
+        $('text-count').textContent = `${n}`;
+      });
+
+      sse.addEventListener('new_file', e => {
+        const file = JSON.parse(e.data);
+        if (curTab !== 'files') return;
+        hide('file-empty');
+        $('file-list').prepend(fileCard(file));
+        const n = $('file-list').children.length;
+        $('file-count').textContent = `${n}`;
+      });
+    }
+
+    function setSSEStatus (s) {
+      const dot   = $('sse-dot');
+      const label = $('sse-label');
+      const states = {
+        connecting  : ['bg-yellow-400', 'Connecting…'],
+        live        : ['bg-green-400',  'Live'],
+        disconnected: ['bg-red-400',    'Offline — retrying…'],
+      };
+      const [cls, txt] = states[s] || states.connecting;
+      dot.className     = `h-2 w-2 rounded-full transition-colors duration-500 ${cls}`;
+      label.textContent = txt;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       TOASTS
+    ════════════════════════════════════════════════════════════════ */
+    function toast (msg, type = 'info') {
+      const colors = {
+        success: 'bg-emerald-600',
+        error  : 'bg-red-600',
+        info   : 'bg-slate-700',
+      };
+      const el = document.createElement('div');
+      el.className = [
+        colors[type] || colors.info,
+        'toast pointer-events-auto max-w-xs translate-x-full rounded-xl px-4 py-3',
+        'text-sm font-medium text-white opacity-0 shadow-xl',
+      ].join(' ');
+      el.textContent = msg;
+      $('toasts').appendChild(el);
+
+      requestAnimationFrame(() => {
+        el.style.transform = 'translateX(0)';
+        el.style.opacity   = '1';
+      });
+
+      setTimeout(() => {
+        el.style.transform = 'translateX(calc(100% + 1rem))';
+        el.style.opacity   = '0';
+        el.addEventListener('transitionend', () => el.remove(), { once: true });
+      }, 3000);
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       UTILITIES
+    ════════════════════════════════════════════════════════════════ */
+    function apiFetch (path, opts = {}) {
+      return fetch(`${API}${path}`, {
+        ...opts,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(opts.headers || {}),
+        },
+      });
+    }
+
+    function timeAgo (iso) {
+      const dt = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+      const s  = Math.floor((Date.now() - dt.getTime()) / 1000);
+      if (s < 5)     return 'just now';
+      if (s < 60)    return `${s}s ago`;
+      if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return `${Math.floor(s / 86400)}d ago`;
+    }
+
+    function fmtBytes (b) {
+      if (b < 1024)    return `${b} B`;
+      if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
+      return `${(b / 1048576).toFixed(1)} MB`;
+    }
+
+    function fileIcon (name) {
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      return ({
+        pdf :'📄', txt :'📝', md  :'📝', doc :'📝', docx:'📝',
+        xls :'📊', xlsx:'📊', csv :'📊', pptx:'📊',
+        jpg :'🖼', jpeg:'🖼', png :'🖼', gif :'🖼', webp:'🖼', svg :'🖼', ico :'🖼',
+        mp4 :'🎬', mov :'🎬', avi :'🎬', mkv :'🎬', webm:'🎬',
+        mp3 :'🎵', wav :'🎵', ogg :'🎵', flac:'🎵', m4a :'🎵',
+        zip :'🗜', rar :'🗜', '7z':'🗜', tar :'🗜', gz  :'🗜',
+        py  :'🐍', js  :'📜', ts  :'📜', html:'🌐', css :'🎨',
+        json:'📋', xml :'📋', yaml:'📋', yml :'📋', toml:'📋',
+        sh  :'⚙',  bat :'⚙',  ps1 :'⚙',  exe :'⚙',
+      })[ext] || '📎';
+    }
+
+    function esc (s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       EVENT LISTENERS  (script is at end of body — DOM already ready)
+    ════════════════════════════════════════════════════════════════ */
+
+    // Auth
+    $('password-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') login();
+    });
+    $('login-btn').addEventListener('click', login);
+    $('logout-btn').addEventListener('click', logout);
+
+    // Text compose
+    $('text-input').addEventListener('input', () => {
+      $('char-count').textContent =
+        `${$('text-input').value.length.toLocaleString()} chars`;
+    });
+    $('text-input').addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitText();
+    });
+    $('submit-text-btn').addEventListener('click', submitText);
+
+    // Tab buttons
+    $('tab-btn-clipboard').addEventListener('click', () => switchTab('clipboard'));
+    $('tab-btn-files').addEventListener('click',     () => switchTab('files'));
+
+    // File input
+    $('file-input').addEventListener('change', function () {
+      handleFiles(this.files);
+    });
+
+    // Drop zone — click
+    $('drop-zone').addEventListener('click', () => $('file-input').click());
+
+    // Drop zone — drag-and-drop
+    $('drop-zone').addEventListener('dragover', e => {
+      e.preventDefault();
+      $('drop-zone').classList.add('border-indigo-500', 'bg-slate-800/40');
+      $('drop-icon').style.transform = 'scale(1.15)';
+    });
+    $('drop-zone').addEventListener('dragleave', () => {
+      $('drop-zone').classList.remove('border-indigo-500', 'bg-slate-800/40');
+      $('drop-icon').style.transform = '';
+    });
+    $('drop-zone').addEventListener('drop', e => {
+      e.preventDefault();
+      $('drop-zone').classList.remove('border-indigo-500', 'bg-slate-800/40');
+      $('drop-icon').style.transform = '';
+      handleFiles(e.dataTransfer.files);
+    });
+
+    // Page-level drop target (when over the files tab body)
+    document.addEventListener('dragover', e => {
+      if (curTab === 'files') e.preventDefault();
+    });
+    document.addEventListener('drop', e => {
+      if (curTab !== 'files') return;
+      if (e.target.closest('#drop-zone')) return; // already handled
+      e.preventDefault();
+      handleFiles(e.dataTransfer.files);
+    });
+
+    /* ── Start ───────────────────────────────────────────────────── */
+    $('max-mb-label').textContent = maxFileMB;
+    checkAuth();
+
+  })();
+  </script>
+</body>
+</html>

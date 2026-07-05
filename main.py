@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 import config
-from auth import verify_token
+from auth import get_current_user_id
 from database import init_db
 from events import broadcaster
 from routers import auth as auth_router
@@ -17,7 +17,6 @@ from routers import text as text_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    os.makedirs(config.UPLOAD_DIR, exist_ok=True)
     await init_db()
     yield
 
@@ -38,9 +37,9 @@ app.include_router(files_router.router)
 
 
 @app.get("/api/events")
-async def sse_events(_token: str = Depends(verify_token)):
-    """Server-Sent Events stream — pushes new_text / new_file events to all clients."""
-    queue = await broadcaster.subscribe()
+async def sse_events(user_id: int = Depends(get_current_user_id)):
+    """SSE stream scoped to the signed-in user."""
+    queue = await broadcaster.subscribe(user_id)
 
     async def generate():
         try:
@@ -54,7 +53,7 @@ async def sse_events(_token: str = Depends(verify_token)):
         except (GeneratorExit, asyncio.CancelledError):
             pass
         finally:
-            broadcaster.unsubscribe(queue)
+            broadcaster.unsubscribe(user_id, queue)
 
     return StreamingResponse(
         generate(),

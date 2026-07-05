@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from supabase import AsyncClient
 
-import aiosqlite
-
-from auth import verify_token
-from database import get_db
+from auth import get_current_user_id
+from database import get_supabase
 from events import broadcaster
 
 router = APIRouter()
@@ -17,36 +16,31 @@ class TextCreate(BaseModel):
 @router.get("/api/text")
 async def get_texts(
     limit: int = 50,
-    _token: str = Depends(verify_token),
-    db: aiosqlite.Connection = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    supabase: AsyncClient = Depends(get_supabase),
 ):
-    cur = await db.execute(
-        "SELECT id, content, created_at FROM text_entries ORDER BY id DESC LIMIT ?",
-        (limit,),
-    )
-    rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    res = await supabase.table("text_entries").select("id, content, created_at").eq("user_id", user_id).order("id", desc=True).limit(limit).execute()
+    return res.data
 
 
 @router.post("/api/text", status_code=201)
 async def create_text(
     body: TextCreate,
-    _token: str = Depends(verify_token),
-    db: aiosqlite.Connection = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    supabase: AsyncClient = Depends(get_supabase),
 ):
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
-    cur = await db.execute(
-        "INSERT INTO text_entries (content) VALUES (?)",
-        (body.content,),
-    )
-    await db.commit()
+    insert_res = await supabase.table("text_entries").insert({
+        "user_id": user_id,
+        "content": body.content
+    }).execute()
 
-    cur = await db.execute(
-        "SELECT id, content, created_at FROM text_entries WHERE id = ?",
-        (cur.lastrowid,),
-    )
-    entry = dict(await cur.fetchone())
-    await broadcaster.broadcast("new_text", entry)
+    if not insert_res.data:
+        raise HTTPException(status_code=500, detail="Failed to save text entry")
+
+    entry = insert_res.data[0]
+    await broadcaster.broadcast(user_id, "new_text", entry)
     return entry
+

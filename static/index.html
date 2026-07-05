@@ -27,6 +27,9 @@
 
     /* Toast enter */
     .toast { transition: transform 0.3s ease, opacity 0.3s ease; }
+
+    .auth-tab.active { background: #334155; color: #fff; }
+    .auth-tab:not(.active) { color: #94a3b8; }
   </style>
 </head>
 <body class="min-h-screen bg-slate-900 text-slate-100">
@@ -38,13 +41,35 @@
        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 px-4">
     <div class="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-800 p-8 shadow-2xl">
 
-      <div class="mb-7 text-center">
+      <div class="mb-6 text-center">
         <div class="mb-3 text-5xl select-none">📋</div>
         <h1 class="text-2xl font-bold tracking-tight text-white">ClipSync</h1>
-        <p class="mt-1 text-sm text-slate-400">Clipboard &amp; file transfer</p>
+        <p class="mt-1 text-sm text-slate-400">Your private clipboard &amp; files</p>
+      </div>
+
+      <div class="mb-4 flex gap-1 rounded-xl bg-slate-900 p-1">
+        <button id="auth-tab-signin" type="button"
+                class="auth-tab flex-1 rounded-lg py-2 text-sm font-medium transition">
+          Sign in
+        </button>
+        <button id="auth-tab-signup" type="button"
+                class="auth-tab flex-1 rounded-lg py-2 text-sm font-medium transition">
+          Sign up
+        </button>
       </div>
 
       <div class="space-y-3">
+        <input
+          id="username-input"
+          type="text"
+          placeholder="Username"
+          autocomplete="username"
+          autocapitalize="off"
+          spellcheck="false"
+          class="w-full rounded-xl border border-slate-600 bg-slate-700 px-4 py-3
+                 text-white placeholder-slate-500 transition
+                 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        />
         <input
           id="password-input"
           type="password"
@@ -54,16 +79,18 @@
                  text-white placeholder-slate-500 transition
                  focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
-        <p id="auth-error"
-           class="hidden text-center text-sm font-medium text-red-400">
-          Incorrect password — try again
+        <p id="auth-hint" class="text-center text-xs text-slate-500">
+          3–32 chars: letters, numbers, underscore. Password min 6 chars.
         </p>
+        <p id="auth-error"
+           class="hidden text-center text-sm font-medium text-red-400"></p>
         <button
-          id="login-btn"
+          id="auth-submit-btn"
+          type="button"
           class="w-full rounded-xl bg-indigo-600 py-3 font-semibold text-white
                  transition hover:bg-indigo-500 active:scale-[0.98]
                  disabled:cursor-not-allowed disabled:opacity-50"
-        >Enter</button>
+        >Sign in</button>
       </div>
 
     </div>
@@ -78,12 +105,15 @@
     <header class="sticky top-0 z-30 border-b border-slate-800 bg-slate-900/90 backdrop-blur-sm">
       <div class="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
 
-        <div class="flex items-center gap-2 select-none">
-          <span class="text-xl">📋</span>
-          <span class="font-bold tracking-tight text-white">ClipSync</span>
+        <div class="flex min-w-0 items-center gap-2 select-none">
+          <span class="text-xl shrink-0">📋</span>
+          <div class="min-w-0">
+            <span class="font-bold tracking-tight text-white">ClipSync</span>
+            <p id="header-username" class="truncate text-xs text-slate-500"></p>
+          </div>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex shrink-0 items-center gap-3">
           <!-- SSE live indicator -->
           <div class="flex items-center gap-1.5" title="Connection status">
             <span id="sse-dot"
@@ -234,10 +264,12 @@
 
     /* ── State ────────────────────────────────────────────────────── */
     const API  = '';
-    let token  = localStorage.getItem('clipsync_token') || '';
+    let token    = localStorage.getItem('clipsync_token') || '';
+    let username = localStorage.getItem('clipsync_username') || '';
+    let authMode = 'signin';
     let sse    = null;
     let curTab = 'clipboard';
-    const maxFileMB = 50;  // mirrored from server default; UI hint only
+    const maxFileMB = 200;  // mirrored from server default; UI hint only
 
     /* ── DOM shortcuts ────────────────────────────────────────────── */
     const $  = id => document.getElementById(id);
@@ -247,58 +279,90 @@
     /* ════════════════════════════════════════════════════════════════
        AUTH
     ════════════════════════════════════════════════════════════════ */
+    function setAuthMode (mode) {
+      authMode = mode;
+      document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+      $(`auth-tab-${mode}`).classList.add('active');
+      $('auth-submit-btn').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+      $('auth-hint').classList.toggle('hidden', mode === 'signin');
+      hide('auth-error');
+    }
+
+    function saveSession (d) {
+      token    = d.token;
+      username = d.username;
+      localStorage.setItem('clipsync_token', token);
+      localStorage.setItem('clipsync_username', username);
+    }
+
+    function clearSession () {
+      token = '';
+      username = '';
+      localStorage.removeItem('clipsync_token');
+      localStorage.removeItem('clipsync_username');
+    }
+
     async function checkAuth () {
       if (!token) { return showWall(); }
       try {
-        const r = await apiFetch('/api/text?limit=1');
+        const r = await apiFetch('/api/auth/me');
         if (r.status === 401) {
-          token = '';
-          localStorage.removeItem('clipsync_token');
+          clearSession();
           showWall();
-        } else {
+        } else if (r.ok) {
+          const d = await r.json();
+          username = d.username;
+          localStorage.setItem('clipsync_username', username);
           showApp();
+        } else {
+          showWall();
         }
       } catch {
         showWall();
       }
     }
 
-    async function login () {
-      const pwd = $('password-input').value;
-      if (!pwd) return;
+    async function submitAuth () {
+      const user = $('username-input').value.trim();
+      const pwd  = $('password-input').value;
+      if (!user || !pwd) return;
 
-      const btn = $('login-btn');
+      const btn  = $('auth-submit-btn');
+      const path = authMode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
       btn.disabled = true;
-      btn.textContent = 'Checking…';
+      btn.textContent = authMode === 'signup' ? 'Creating…' : 'Signing in…';
       hide('auth-error');
 
       try {
-        const r = await fetch(`${API}/api/auth/login`, {
+        const r = await fetch(`${API}${path}`, {
           method : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body   : JSON.stringify({ password: pwd }),
+          body   : JSON.stringify({ username: user, password: pwd }),
         });
+        const data = await r.json().catch(() => ({}));
         if (r.ok) {
-          const d = await r.json();
-          token   = d.token;
-          localStorage.setItem('clipsync_token', token);
-          showApp();
-        } else {
-          show('auth-error');
+          saveSession(data);
+          $('username-input').value = '';
           $('password-input').value = '';
-          $('password-input').focus();
+          showApp();
+          toast(authMode === 'signup' ? 'Account created!' : 'Welcome back!', 'success');
+        } else {
+          $('auth-error').textContent = data.detail || 'Authentication failed';
+          if (Array.isArray(data.detail)) {
+            $('auth-error').textContent = data.detail.map(e => e.msg || e).join(', ');
+          }
+          show('auth-error');
         }
       } catch {
         toast('Cannot reach server', 'error');
       } finally {
-        btn.disabled    = false;
-        btn.textContent = 'Enter';
+        btn.disabled = false;
+        btn.textContent = authMode === 'signup' ? 'Create account' : 'Sign in';
       }
     }
 
     function logout () {
-      localStorage.removeItem('clipsync_token');
-      token = '';
+      clearSession();
       if (sse) { sse.close(); sse = null; }
       showWall();
     }
@@ -307,13 +371,16 @@
       $('auth-wall').classList.remove('hidden');
       $('main-app').classList.remove('flex');
       $('main-app').classList.add('hidden');
-      setTimeout(() => $('password-input').focus(), 60);
+      $('header-username').textContent = '';
+      setAuthMode('signin');
+      setTimeout(() => $('username-input').focus(), 60);
     }
 
     function showApp () {
       $('auth-wall').classList.add('hidden');
       $('main-app').classList.remove('hidden');
       $('main-app').classList.add('flex');
+      $('header-username').textContent = username ? `@${username}` : '';
       switchTab('clipboard');
       connectSSE();
     }
@@ -481,7 +548,7 @@
       $('file-input').value = '';
     }
 
-    function uploadFile (file) {
+    async function uploadFile (file) {
       if (file.size > maxFileMB * 1024 * 1024) {
         toast(`"${file.name}" exceeds ${maxFileMB} MB limit`, 'error');
         return;
@@ -497,41 +564,69 @@
       bar.style.width    = '0%';
       prog.classList.remove('hidden');
 
-      const fd = new FormData();
-      fd.append('file', file);
+      try {
+        // 1. Get signed upload URL
+        const signedRes = await apiFetch('/api/files/signed-upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name })
+        });
+        if (!signedRes.ok) throw new Error('Failed to get upload URL');
+        const { signed_url, stored_name, original_name } = await signedRes.json();
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API}/api/files/upload`);
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        // 2. Upload file directly to storage provider using PUT
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', signed_url);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
-      xhr.upload.addEventListener('progress', e => {
-        if (e.lengthComputable) {
-          const p = Math.round((e.loaded / e.total) * 100);
-          pctEl.textContent = `${p}%`;
-          bar.style.width   = `${p}%`;
-        }
-      });
+        xhr.upload.addEventListener('progress', e => {
+          if (e.lengthComputable) {
+            const p = Math.round((e.loaded / e.total) * 100);
+            pctEl.textContent = `${p}%`;
+            bar.style.width   = `${p}%`;
+          }
+        });
 
-      xhr.addEventListener('load', () => {
+        xhr.addEventListener('load', async () => {
+          if (xhr.status === 200 || xhr.status === 201) {
+            // 3. Save metadata to database
+            try {
+              const metaRes = await apiFetch('/api/files/upload-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  original_name: original_name,
+                  stored_name: stored_name,
+                  size_bytes: file.size
+                })
+              });
+              prog.classList.add('hidden');
+              if (metaRes.ok) {
+                toast(`"${file.name}" uploaded!`, 'success');
+                if (curTab === 'files') loadFiles();
+              } else {
+                toast('Failed to save file metadata', 'error');
+              }
+            } catch {
+              prog.classList.add('hidden');
+              toast('Metadata save connection error', 'error');
+            }
+          } else {
+            prog.classList.add('hidden');
+            toast(`Upload failed (${xhr.status})`, 'error');
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          prog.classList.add('hidden');
+          toast('Upload error — check connection', 'error');
+        });
+
+        xhr.send(file);
+      } catch (err) {
         prog.classList.add('hidden');
-        if (xhr.status === 200 || xhr.status === 201) {
-          toast(`"${file.name}" uploaded!`, 'success');
-          if (curTab === 'files') loadFiles();
-        } else if (xhr.status === 413) {
-          toast('File too large for server limit', 'error');
-        } else if (xhr.status === 401) {
-          toast('Session expired — please log in again', 'error');
-        } else {
-          toast(`Upload failed (${xhr.status})`, 'error');
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        prog.classList.add('hidden');
-        toast('Upload error — check connection', 'error');
-      });
-
-      xhr.send(fd);
+        toast(err.message || 'Failed to start upload', 'error');
+      }
     }
 
     function fileCard (f) {
@@ -574,7 +669,7 @@
       sse.onerror = () => {
         setSSEStatus('disconnected');
         sse.close();
-        setTimeout(connectSSE, 5000);
+        setTimeout(connectSSE, 2000);
       };
 
       sse.addEventListener('new_text', e => {
@@ -697,10 +792,15 @@
     ════════════════════════════════════════════════════════════════ */
 
     // Auth
-    $('password-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') login();
+    $('auth-tab-signin').addEventListener('click', () => setAuthMode('signin'));
+    $('auth-tab-signup').addEventListener('click', () => setAuthMode('signup'));
+    $('auth-submit-btn').addEventListener('click', submitAuth);
+    $('username-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('password-input').focus();
     });
-    $('login-btn').addEventListener('click', login);
+    $('password-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitAuth();
+    });
     $('logout-btn').addEventListener('click', logout);
 
     // Text compose
@@ -754,6 +854,7 @@
     });
 
     /* ── Start ───────────────────────────────────────────────────── */
+    setAuthMode('signin');
     $('max-mb-label').textContent = maxFileMB;
     checkAuth();
 

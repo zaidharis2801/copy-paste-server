@@ -2,5 +2,6 @@ fastapi
 uvicorn[standard]
 python-multipart
 python-jose[cryptography]
-aiosqlite
+bcrypt
+supabase>=2.4.0
 python-dotenv

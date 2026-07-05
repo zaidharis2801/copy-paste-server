@@ -1,39 +1,17 @@
-import aiosqlite
 import config
+from supabase import acreate_client, AsyncClient
 
-_CREATE_TEXT_TABLE = """
-CREATE TABLE IF NOT EXISTS text_entries (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    content    TEXT    NOT NULL,
-    created_at TEXT    NOT NULL
-                       DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-)
-"""
-
-_CREATE_FILE_TABLE = """
-CREATE TABLE IF NOT EXISTS file_entries (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    original_name TEXT    NOT NULL,
-    stored_name   TEXT    NOT NULL,
-    file_path     TEXT    NOT NULL,
-    size_bytes    INTEGER NOT NULL,
-    created_at    TEXT    NOT NULL
-                          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-)
-"""
-
+_client: AsyncClient = None
 
 async def init_db() -> None:
-    async with aiosqlite.connect(config.DB_PATH) as db:
-        await db.execute(_CREATE_TEXT_TABLE)
-        await db.execute(_CREATE_FILE_TABLE)
-        await db.commit()
+    global _client
+    if _client is None:
+        if not config.SUPABASE_URL or not config.SUPABASE_KEY:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables.")
+        _client = await acreate_client(config.SUPABASE_URL, config.SUPABASE_KEY)
 
-
-async def get_db():
-    db = await aiosqlite.connect(config.DB_PATH)
-    db.row_factory = aiosqlite.Row
-    try:
-        yield db
-    finally:
-        await db.close()
+async def get_supabase() -> AsyncClient:
+    global _client
+    if _client is None:
+        await init_db()
+    return _client

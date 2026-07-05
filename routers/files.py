@@ -1,20 +1,32 @@
-import os
 import re
 import uuid
 
-import aiosqlite
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
+from supabase import AsyncClient
 
 import config
-from auth import verify_token
-from database import get_db
+from auth import get_current_user_id
+from database import get_supabase
 from events import broadcaster
 
 router = APIRouter()
 
 
+class SignedUrlRequest(BaseModel):
+    filename: str
+
+
+class FileMetadataRequest(BaseModel):
+    original_name: str
+    stored_name: str
+    size_bytes: int
+
+
 def _sanitize(name: str) -> str:
+    # Remove directory components and sanitize string
+    import os
     name = os.path.basename(name or "upload")
     name = re.sub(r"[^\w.\- ]", "_", name)
     return (name[:200].strip()) or "unnamed"
@@ -22,74 +34,88 @@ def _sanitize(name: str) -> str:
 
 @router.get("/api/files")
 async def get_files(
-    _token: str = Depends(verify_token),
-    db: aiosqlite.Connection = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    supabase: AsyncClient = Depends(get_supabase),
 ):
-    cur = await db.execute(
-        "SELECT id, original_name, size_bytes, created_at FROM file_entries ORDER BY id DESC"
-    )
-    rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    res = await supabase.table("file_entries").select("id, original_name, size_bytes, created_at").eq("user_id", user_id).order("id", desc=True).execute()
+    return res.data
 
 
-@router.post("/api/files/upload", status_code=201)
-async def upload_file(
-    file: UploadFile = File(...),
-    _token: str = Depends(verify_token),
-    db: aiosqlite.Connection = Depends(get_db),
+@router.post("/api/files/signed-upload-url")
+async def get_signed_upload_url(
+    body: SignedUrlRequest,
+    user_id: int = Depends(get_current_user_id),
+    supabase: AsyncClient = Depends(get_supabase),
 ):
-    max_bytes = config.MAX_FILE_MB * 1024 * 1024
-    content = await file.read()
+    original_name = _sanitize(body.filename)
+    stored_name = f"{uuid.uuid4().hex}_{original_name}"
+    path = f"{user_id}/{stored_name}"
 
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds {config.MAX_FILE_MB} MB limit",
-        )
-    if len(content) == 0:
-        raise HTTPException(status_code=400, detail="Empty file")
+    try:
+        # Create signed upload URL in Supabase storage bucket
+        # Returns a dict containing e.g. {"signedUrl": "..."} or similar
+        res = await supabase.storage.from_(config.SUPABASE_BUCKET).create_signed_upload_url(path)
+        if not res or "signedUrl" not in res:
+            raise HTTPException(status_code=500, detail="Failed to generate upload URL from storage provider")
+        
+        return {
+            "signed_url": res["signedUrl"],
+            "stored_name": stored_name,
+            "original_name": original_name
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage error: {str(e)}")
 
-    original_name = _sanitize(file.filename)
-    stored_name   = f"{uuid.uuid4().hex}_{original_name}"
-    file_path     = os.path.join(config.UPLOAD_DIR, stored_name)
 
-    with open(file_path, "wb") as fh:
-        fh.write(content)
+@router.post("/api/files/upload-metadata", status_code=201)
+async def upload_metadata(
+    body: FileMetadataRequest,
+    user_id: int = Depends(get_current_user_id),
+    supabase: AsyncClient = Depends(get_supabase),
+):
+    file_path = f"{user_id}/{body.stored_name}"
 
-    cur = await db.execute(
-        """INSERT INTO file_entries (original_name, stored_name, file_path, size_bytes)
-           VALUES (?, ?, ?, ?)""",
-        (original_name, stored_name, file_path, len(content)),
-    )
-    await db.commit()
+    insert_res = await supabase.table("file_entries").insert({
+        "user_id": user_id,
+        "original_name": body.original_name,
+        "stored_name": body.stored_name,
+        "file_path": file_path,
+        "size_bytes": body.size_bytes
+    }).execute()
 
-    cur = await db.execute(
-        "SELECT id, original_name, size_bytes, created_at FROM file_entries WHERE id = ?",
-        (cur.lastrowid,),
-    )
-    entry = dict(await cur.fetchone())
-    await broadcaster.broadcast("new_file", entry)
+    if not insert_res.data:
+        raise HTTPException(status_code=500, detail="Failed to save file metadata")
+
+    entry = insert_res.data[0]
+    # Format metadata back into dict that matches what frontend expects (excluding foreign key and file_path if not needed, but index.html uses id, original_name, size_bytes, created_at)
+    await broadcaster.broadcast(user_id, "new_file", entry)
     return entry
 
 
 @router.get("/api/files/{file_id}/download")
 async def download_file(
     file_id: int,
-    _token: str = Depends(verify_token),
-    db: aiosqlite.Connection = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    supabase: AsyncClient = Depends(get_supabase),
 ):
-    cur = await db.execute(
-        "SELECT original_name, file_path FROM file_entries WHERE id = ?",
-        (file_id,),
-    )
-    row = await cur.fetchone()
-    if not row:
+    res = await supabase.table("file_entries").select("original_name, stored_name").eq("id", file_id).eq("user_id", user_id).execute()
+    if not res.data:
         raise HTTPException(status_code=404, detail="File not found")
-    if not os.path.exists(row["file_path"]):
-        raise HTTPException(status_code=404, detail="File data missing on disk")
 
-    return FileResponse(
-        path=row["file_path"],
-        filename=row["original_name"],
-        media_type="application/octet-stream",
-    )
+    row = res.data[0]
+    path = f"{user_id}/{row['stored_name']}"
+
+    try:
+        # Create a signed download URL (valid for 60 seconds)
+        download_res = await supabase.storage.from_(config.SUPABASE_BUCKET).create_signed_url(path, expires_in=60)
+        if not download_res or "signedURL" not in download_res:
+            # Note: in some versions of Supabase storage, key might be 'signedUrl' (lowercase l)
+            signed_url = download_res.get("signedURL") or download_res.get("signedUrl")
+            if not signed_url:
+                raise HTTPException(status_code=500, detail="Failed to generate download link")
+        else:
+            signed_url = download_res["signedURL"]
+
+        return RedirectResponse(url=signed_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage error: {str(e)}")

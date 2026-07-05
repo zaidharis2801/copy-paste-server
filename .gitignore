@@ -1,5 +1,7 @@
 # Environment — contains passwords and secrets
 .env
+ssh-key-2026-06-28.key
+ssh-key-2026-06-28.key.pub
 
 # Runtime data
 uploads/
@@ -19,3 +21,8 @@ build/
 .vscode/
 .idea/
 *.swp
+
+# AI Agent skills
+.agents/
+skills-lock.json
+
